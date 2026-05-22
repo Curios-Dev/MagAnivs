@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pixel Shop Shooter - Harder Edition</title>
+  <style>
+    * { box-sizing: border-box; user-select: none; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at top, #1e293b, #020617 70%);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: white;
+    }
+    .wrap { width: min(1040px, 96vw); }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 12px;
+      font-size: 14px;
+      color: #d1d5db;
+      flex-wrap: wrap;
+    }
+    .title { font-weight: 900; color: #fff; letter-spacing: 0.04em; }
+    .pill {
+      padding: 7px 10px;
+      border: 2px solid #374151;
+      background: #0b1220;
+      border-radius: 999px;
+    }
+    canvas {
+      width: 100%;
+      height: auto;
+      image-rendering: pixelated;
+      border: 4px solid #374151;
+      background: #1f2937;
+      box-shadow: 0 20px 60px rgba(0,0,0,.35);
+      display: block;
+    }
+    .help {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+      color: #9ca3af;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    button {
+      border: 0;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #f59e0b;
+      color: #111827;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:disabled { cursor: not-allowed; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(0,0,0,.62);
+      padding: 20px;
+    }
+    .modal.show { display: grid; }
+    .panel {
+      width: min(510px, 94vw);
+      background: #0f172a;
+      border: 3px solid #334155;
+      box-shadow: 0 25px 80px rgba(0,0,0,.5);
+      padding: 22px;
+      border-radius: 18px;
+    }
+    .panel h2 { margin: 0 0 8px; font-size: 22px; }
+    .panel p { margin: 0 0 14px; color: #cbd5e1; line-height: 1.45; }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 2px solid #475569;
+      background: #020617;
+      color: white;
+      outline: none;
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+    input:focus { border-color: #f59e0b; }
+    .shop-grid { display: grid; gap: 10px; margin: 14px 0; }
+    .shop-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border: 2px solid #334155;
+      background: #020617;
+      border-radius: 12px;
+      color: #e5e7eb;
+    }
+    .shop-item small { color: #94a3b8; display: block; margin-top: 3px; line-height: 1.35; }
+    .row { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+    .secondary { background: #334155; color: white; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="title">PIXEL SHOP SHOOTER</div>
+      <div class="pill" id="statusText">Go to the shop and press E</div>
+    </div>
+
+    <canvas id="game" width="900" height="540" aria-label="Pixel shooter game canvas"></canvas>
+
+    <div class="help">
+      <div>
+        <b>Controls:</b> WASD / Arrow Keys = move · Mouse = aim · Click / Space = shoot · <b>Shift = dash</b> · E = shop / next level · R = restart<br>
+        <b>Goal:</b> password is <b>Cat</b>. Kill enemies, dodge hazards, collect coins, upgrade between levels, survive the mini-boss. 💀
+      </div>
+      <button id="restartBtn">Restart</button>
+    </div>
+  </div>
+
+  <div class="modal" id="shopModal">
+    <div class="panel">
+      <h2>🛒 Shop</h2>
+      <p id="shopText">The shopkeeper asks for the secret password. Correct password gives you the strong gun. Wrong password gives you a weak gun.</p>
+      <div id="passwordBlock">
+        <input id="passwordInput" type="text" placeholder="Enter password..." autocomplete="off" />
+      </div>
+      <div class="shop-grid" id="upgradeShop"></div>
+      <div class="row">
+        <button class="secondary" id="cancelShop">Close</button>
+        <button id="buyGun">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const statusText = document.getElementById("statusText");
+    const shopModal = document.getElementById("shopModal");
+    const passwordInput = document.getElementById("passwordInput");
+    const passwordBlock = document.getElementById("passwordBlock");
+    const buyGunBtn = document.getElementById("buyGun");
+    const cancelShopBtn = document.getElementById("cancelShop");
+    const restartBtn = document.getElementById("restartBtn");
+    const upgradeShop = document.getElementById("upgradeShop");
+    const shopText = document.getElementById("shopText");
+
+    const VIEW_W = canvas.width;
+    const VIEW_H = canvas.height;
+    const WORLD_W = 2000;
+    const WORLD_H = 1240;
+
+    const keys = new Set();
+    const mouse = { x: VIEW_W / 2, y: VIEW_H / 2, worldX: VIEW_W / 2, worldY: VIEW_H / 2, down: false };
+    let lastTime = 0;
+    let gameState;
+
+    const levelData = [
+      {
+        level: 1,
+        spawn: { x: 120, y: 560 },
+        shop: { x: 240, y: 480, w: 138, h: 124 },
+        exit: { x: 1810, y: 560, w: 86, h: 86 },
+        enemyCount: 7,
+        enemyHp: 60,
+        enemySpeed: 58,
+        enemyDamage: 12,
+        rangerCount: 1,
+        bruteCount: 0,
+        boss: false,
+        trapCount: 4,
+        coinMin: 4,
+        coinMax: 7,
+        message: "Level 1: learn the map. Red floors hurt. Purple enemies shoot."
+      },
+      {
+        level: 2,
+        spawn: { x: 120, y: 185 },
+        shop: { x: 250, y: 120, w: 138, h: 124 },
+        exit: { x: 1810, y: 1000, w: 86, h: 86 },
+        enemyCount: 10,
+        enemyHp: 84,
+        enemySpeed: 74,
+        enemyDamage: 16,
+        rangerCount: 3,
+        bruteCount: 1,
+        boss: false,
+        trapCount: 7,
+        coinMin: 6,
+        coinMax: 11,
+        message: "Level 2: enemies hit harder. Use dash. Don’t face tank."
+      },
+      {
+        level: 3,
+        spawn: { x: 120, y: 1030 },
+        shop: { x: 260, y: 940, w: 138, h: 124 },
+        exit: { x: 1810, y: 120, w: 86, h: 86 },
+        enemyCount: 12,
+        enemyHp: 105,
+        enemySpeed: 86,
+        enemyDamage: 20,
+        rangerCount: 4,
+        bruteCount: 2,
+        boss: true,
+        trapCount: 10,
+        coinMin: 8,
+        coinMax: 14,
+        message: "Level 3: final fight. The big guy is slow but brutal. Kite him."
+      }
+    ];
+
+    const baseObstacles = [
+      { x: 520, y: 130, w: 250, h: 82 },
+      { x: 930, y: 80, w: 84, h: 330 },
+      { x: 1290, y: 180, w: 290, h: 80 },
+      { x: 540, y: 500, w: 120, h: 330 },
+      { x: 820, y: 590, w: 330, h: 78 },
+      { x: 1320, y: 550, w: 92, h: 330 },
+      { x: 280, y: 830, w: 360, h: 72 },
+      { x: 760, y: 965, w: 190, h: 82 },
+      { x: 1120, y: 930, w: 360, h: 76 },
+      { x: 1620, y: 730, w: 90, h: 260 },
+      { x: 1580, y: 380, w: 240, h: 70 }
+    ];
+
+    function resetGame() {
+      gameState = {
+        running: true,
+        won: false,
+        lost: false,
+        levelIndex: 0,
+        betweenLevels: false,
+        messageTimer: 0,
+        message: "Go to the shop and press E",
+        camera: { x: 0, y: 0 },
+        player: {
+          x: 120,
+          y: 560,
+          w: 24,
+          h: 32,
+          speed: 194,
+          health: 100,
+          maxHealth: 100,
+          coins: 0,
+          hasGun: false,
+          gunType: "none",
+          damage: 0,
+          fireDelay: 999,
+          lastShot: 0,
+          dashCooldown: 0,
+          dashTime: 0,
+          invuln: 0,
+          shield: 0,
+          medkits: 0
+        },
+        shop: { x: 240, y: 480, w: 138, h: 124 },
+        exit: { x: 1810, y: 560, w: 86, h: 86 },
+        bullets: [],
+        enemyBullets: [],
+        coins: [],
+        medkits: [],
+        traps: [],
+        particles: [],
+        enemies: [],
+        cameraShake: 0,
+        firstPasswordUsed: false
+      };
+      loadLevel(0, true);
+      closeShop();
+    }
+
+    function loadLevel(index, freshStart = false) {
+      const data = levelData[index];
+      const p = gameState.player;
+      gameState.levelIndex = index;
+      gameState.betweenLevels = false;
+      gameState.running = true;
+      gameState.won = false;
+      gameState.lost = false;
+      gameState.shop = { ...data.shop };
+      gameState.exit = { ...data.exit };
+      gameState.bullets = [];
+      gameState.enemyBullets = [];
+      gameState.coins = [];
+      gameState.medkits = [];
+      gameState.particles = [];
+      p.x = data.spawn.x;
+      p.y = data.spawn.y;
+      p.health = freshStart ? p.maxHealth : Math.min(p.maxHealth, p.health + 28);
+      p.invuln = 1.2;
+      p.dashCooldown = 0;
+      p.dashTime = 0;
+      gameState.traps = makeTraps(data);
+      gameState.enemies = makeEnemies(data);
+      setMessage(data.message, 3.5);
+      updateCamera();
+    }
+
+    function makeTraps(data) {
+      const traps = [];
+      const avoid = [gameState.shop, gameState.exit, { x: data.spawn.x - 130, y: data.spawn.y - 130, w: 280, h: 280 }];
+      for (let i = 0; i < data.trapCount; i++) {
+        let t, tries = 0;
+        do {
+          t = {
+            x: 470 + Math.random() * 1220,
+            y: 140 + Math.random() * 900,
+            w: 54 + Math.random() * 34,
+            h: 42 + Math.random() * 30,
+            damage: 9 + data.level * 2,
+            pulse: Math.random() * 10
+          };
+          tries++;
+        } while (tries < 120 && (collidesWithSolid(t) || avoid.some(z => rectsOverlap(t, z))));
+        traps.push(t);
+      }
+      return traps;
+    }
+
+    function makeEnemies(data) {
+      const list = [];
+      const safeZones = [gameState.shop, gameState.exit, { x: data.spawn.x - 150, y: data.spawn.y - 150, w: 320, h: 320 }];
+      const addEnemy = (type, i) => {
+        let enemy, tries = 0;
+        do {
+          const boss = type === "boss";
+          const brute = type === "brute";
+          const ranger = type === "ranger";
+          const hp = boss ? 420 : brute ? data.enemyHp + 95 : data.enemyHp + Math.floor(Math.random() * 24) + i * 2;
+          enemy = {
+            type,
+            x: 490 + Math.random() * 1240,
+            y: 110 + Math.random() * 980,
+            w: boss ? 44 : brute ? 34 : 24,
+            h: boss ? 50 : brute ? 40 : 30,
+            health: hp,
+            maxHealth: hp,
+            speed: boss ? 44 : brute ? data.enemySpeed * 0.62 : ranger ? data.enemySpeed * 0.72 : data.enemySpeed + Math.random() * 18,
+            damage: boss ? 34 : brute ? data.enemyDamage + 12 : data.enemyDamage,
+            cooldown: 0,
+            shootCooldown: 0.8 + Math.random() * 1.1,
+            coinValue: boss ? 45 : brute ? data.coinMax + 7 : Math.floor(data.coinMin + Math.random() * (data.coinMax - data.coinMin + 1))
+          };
+          tries++;
+        } while (tries < 150 && (collidesWithSolid(enemy) || safeZones.some(z => rectsOverlap(enemy, z))));
+        list.push(enemy);
+      };
+
+      for (let i = 0; i < data.enemyCount; i++) addEnemy("chaser", i);
+      for (let i = 0; i < data.rangerCount; i++) addEnemy("ranger", i);
+      for (let i = 0; i < data.bruteCount; i++) addEnemy("brute", i);
+      if (data.boss) addEnemy("boss", 0);
+      return list;
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+    function center(obj) { return { x: obj.x + obj.w / 2, y: obj.y + obj.h / 2 }; }
+    function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+
+    function collidesWithSolid(rect) {
+      if (rect.x < 18 || rect.y < 18 || rect.x + rect.w > WORLD_W - 18 || rect.y + rect.h > WORLD_H - 18) return true;
+      return baseObstacles.some(o => rectsOverlap(rect, o));
+    }
+
+    function collidesWithWalls(rect) {
+      if (collidesWithSolid(rect)) return true;
+      if (rectsOverlap(rect, gameState.shop)) return true;
+      return false;
+    }
+
+    function tryMove(obj, dx, dy) {
+      obj.x += dx;
+      if (collidesWithWalls(obj)) obj.x -= dx;
+      obj.y += dy;
+      if (collidesWithWalls(obj)) obj.y -= dy;
+      obj.x = clamp(obj.x, 18, WORLD_W - obj.w - 18);
+      obj.y = clamp(obj.y, 18, WORLD_H - obj.h - 18);
+    }
+
+    function setMessage(text, seconds = 2) {
+      gameState.message = text;
+      gameState.messageTimer = seconds;
+      statusText.textContent = text;
+    }
+
+    function openShop() {
+      if (gameState.won || gameState.lost) return;
+      upgradeShop.innerHTML = "";
+      shopModal.classList.add("show");
+      if (!gameState.firstPasswordUsed) {
+        shopText.textContent = "The shopkeeper asks for the secret password. Correct password gives you the strong gun. Wrong password gives you a weak gun.";
+        passwordBlock.style.display = "block";
+        buyGunBtn.textContent = "Buy Gun";
+        passwordInput.value = "";
+        setTimeout(() => passwordInput.focus(), 30);
+      } else {
+        shopText.textContent = `Coins: ${gameState.player.coins}. Buy upgrades before the next level. Smart upgrades matter now.`;
+        passwordBlock.style.display = "none";
+        buyGunBtn.textContent = gameState.betweenLevels ? "Next Level" : "Close";
+        renderUpgradeShop();
+      }
+    }
+
+    function closeShop() { shopModal.classList.remove("show"); }
+
+    function renderUpgradeShop() {
+      const p = gameState.player;
+      const items = [
+        { name: "+25 Max HP", desc: "More mistakes allowed. Still not an excuse to face tank.", cost: 18, buy: () => { p.maxHealth += 25; p.health = Math.min(p.maxHealth, p.health + 25); } },
+        { name: "+8 Damage", desc: "Best raw value if your aim is decent.", cost: 22, buy: () => { p.damage += 8; } },
+        { name: "Faster Fire Rate", desc: "Reduces shot cooldown. Feels instantly better.", cost: 26, buy: () => { p.fireDelay = Math.max(90, p.fireDelay - 36); } },
+        { name: "+18 Speed", desc: "Kiting + dodging becomes easier.", cost: 20, buy: () => { p.speed += 18; } },
+        { name: "Shield Battery", desc: "Blocks 30 damage. Great before Level 3.", cost: 24, buy: () => { p.shield += 30; } },
+        { name: "Medkit", desc: "Instant +45 HP. Useful if you enter shop low.", cost: 14, buy: () => { p.health = Math.min(p.maxHealth, p.health + 45); } }
+      ];
+      for (const item of items) {
+        const row = document.createElement("div");
+        row.className = "shop-item";
+        row.innerHTML = `<div><b>${item.name}</b><small>${item.desc}</small></div><button>${item.cost} 🪙</button>`;
+        const btn = row.querySelector("button");
+        btn.disabled = p.coins < item.cost;
+        btn.style.opacity = p.coins < item.cost ? "0.45" : "1";
+        btn.addEventListener("click", () => {
+          if (p.coins < item.cost) return;
+          p.coins -= item.cost;
+          item.buy();
+          setMessage(`Bought ${item.name}`, 1.4);
+          openShop();
+        });
+        upgradeShop.appendChild(row);
+      }
+    }
+
+    function buyGunOrContinue() {
+      const p = gameState.player;
+      if (!gameState.firstPasswordUsed) {
+        const typed = passwordInput.value.trim();
+        p.hasGun = true;
+        gameState.firstPasswordUsed = true;
+        if (typed === "Cat") {
+          p.gunType = "strong";
+          p.damage = 36;
+          p.fireDelay = 178;
+          setMessage("Correct password. Strong gun unlocked. Now earn coins. 😤", 3);
+        } else {
+          p.gunType = "weak";
+          p.damage = 7;
+          p.fireDelay = 470;
+          setMessage("Wrong password. Weak gun unlocked. Brutal mode activated. 💀", 3);
+        }
+        closeShop();
+        return;
+      }
+      if (gameState.betweenLevels) {
+        const next = gameState.levelIndex + 1;
+        if (next < levelData.length) {
+          closeShop();
+          loadLevel(next);
+        } else {
+          closeShop();
+          gameState.won = true;
+          gameState.running = false;
+          setMessage("You beat all 3 levels. Actual W. 🏆", 999);
+        }
+      } else closeShop();
+    }
+
+    function damagePlayer(amount, reason = "You got hit!") {
+      const p = gameState.player;
+      if (p.invuln > 0 || gameState.lost || gameState.won) return;
+      let remaining = amount;
+      if (p.shield > 0) {
+        const blocked = Math.min(p.shield, remaining);
+        p.shield -= blocked;
+        remaining -= blocked;
+      }
+      p.health -= remaining;
+      p.invuln = 0.42;
+      gameState.cameraShake = 8;
+      spawnParticles(p.x + p.w / 2, p.y + p.h / 2, 8, "hit");
+      setMessage(reason, 0.85);
+      if (p.health <= 0) {
+        p.health = 0;
+        gameState.lost = true;
+        gameState.running = false;
+        setMessage(p.gunType === "weak" ? "You died. Wrong password = weak gun = cooked. 💀" : "You died. Greed or bad movement got you. 😭", 999);
+      }
+    }
+
+    function shoot(now) {
+      const p = gameState.player;
+      if (!p.hasGun || gameState.lost || gameState.won || gameState.betweenLevels) return;
+      if (now - p.lastShot < p.fireDelay) return;
+      p.lastShot = now;
+      const pc = center(p);
+      const angle = Math.atan2(mouse.worldY - pc.y, mouse.worldX - pc.x);
+      const speed = p.gunType === "strong" ? 585 : 370;
+      const size = p.gunType === "strong" ? 7 : 4;
+      gameState.bullets.push({ x: pc.x + Math.cos(angle) * 20, y: pc.y + Math.sin(angle) * 20, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1.25, damage: p.damage, size, type: p.gunType });
+      gameState.cameraShake = p.gunType === "strong" ? 5 : 2;
+    }
+
+    function enemyShoot(enemy) {
+      const p = gameState.player;
+      const ec = center(enemy);
+      const pc = center(p);
+      const angle = Math.atan2(pc.y - ec.y, pc.x - ec.x);
+      const speed = enemy.type === "boss" ? 260 : 235;
+      const size = enemy.type === "boss" ? 11 : 8;
+      const damage = enemy.type === "boss" ? 18 : 12 + gameState.levelIndex * 2;
+      gameState.enemyBullets.push({ x: ec.x, y: ec.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 2.3, damage, size, type: enemy.type });
+      spawnParticles(ec.x, ec.y, 4, "enemyShot");
+    }
+
+    function spawnParticles(x, y, count, kind) {
+      for (let i = 0; i < count; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = 40 + Math.random() * 120;
+        gameState.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.25 + Math.random() * 0.35, maxLife: 0.6, kind });
+      }
+    }
+
+    function dropCoins(x, y, amount) {
+      let remaining = amount;
+      while (remaining > 0) {
+        const value = Math.min(remaining, Math.random() < 0.65 ? 2 : 4);
+        remaining -= value;
+        const angle = Math.random() * Math.PI * 2;
+        const spread = 8 + Math.random() * 24;
+        gameState.coins.push({ x: x + Math.cos(angle) * spread, y: y + Math.sin(angle) * spread, w: 12, h: 12, value, bob: Math.random() * 10 });
+      }
+      if (Math.random() < 0.12) gameState.medkits.push({ x: x - 9, y: y - 9, w: 18, h: 18, heal: 22, bob: 0 });
+    }
+
+    function update(dt, now) {
+      const p = gameState.player;
+      if (gameState.messageTimer > 0) {
+        gameState.messageTimer -= dt;
+        if (gameState.messageTimer <= 0 && !gameState.won && !gameState.lost) statusText.textContent = gameState.message;
+      }
+      p.invuln = Math.max(0, p.invuln - dt);
+      p.dashCooldown = Math.max(0, p.dashCooldown - dt);
+      p.dashTime = Math.max(0, p.dashTime - dt);
+      if (shopModal.classList.contains("show")) { updateCamera(); return; }
+
+      if (!gameState.lost && !gameState.won) {
+        let dx = 0, dy = 0;
+        if (keys.has("arrowup") || keys.has("w")) dy -= 1;
+        if (keys.has("arrowdown") || keys.has("s")) dy += 1;
+        if (keys.has("arrowleft") || keys.has("a")) dx -= 1;
+        if (keys.has("arrowright") || keys.has("d")) dx += 1;
+        if (dx || dy) {
+          const len = Math.hypot(dx, dy);
+          dx /= len; dy /= len;
+          const dashBoost = p.dashTime > 0 ? 2.8 : 1;
+          tryMove(p, dx * p.speed * dashBoost * dt, dy * p.speed * dashBoost * dt);
+        }
+        if (!gameState.betweenLevels && (keys.has(" ") || mouse.down)) shoot(now);
+      }
+
+      for (const trap of gameState.traps) {
+        trap.pulse += dt * 4;
+        if (!gameState.betweenLevels && rectsOverlap(p, trap)) damagePlayer(trap.damage * dt * 3.4, "Red floor hurts. Move. 🔥");
+      }
+
+      for (const b of gameState.bullets) {
+        b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+        if (collidesWithSolid({ x: b.x - b.size / 2, y: b.y - b.size / 2, w: b.size, h: b.size })) { b.life = 0; spawnParticles(b.x, b.y, 3, "wall"); }
+      }
+      gameState.bullets = gameState.bullets.filter(b => b.life > 0 && b.x > -20 && b.x < WORLD_W + 20 && b.y > -20 && b.y < WORLD_H + 20);
+
+      for (const b of gameState.enemyBullets) {
+        b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+        const br = { x: b.x - b.size / 2, y: b.y - b.size / 2, w: b.size, h: b.size };
+        if (collidesWithSolid(br)) { b.life = 0; spawnParticles(b.x, b.y, 3, "wall"); }
+        if (rectsOverlap(p, br)) { b.life = 0; damagePlayer(b.damage, "Projectile hit. Watch purple enemies. 🟣"); }
+      }
+      gameState.enemyBullets = gameState.enemyBullets.filter(b => b.life > 0);
+
+      for (const enemy of gameState.enemies) {
+        const pc = center(p), ec = center(enemy);
+        const dist = distance(pc, ec);
+        const isRanged = enemy.type === "ranger" || enemy.type === "boss";
+        if (!gameState.lost && !gameState.won && !gameState.betweenLevels && dist < 720) {
+          if (isRanged && dist < 430 && dist > 180) {
+            // Ranged enemies hold distance instead of blindly walking in.
+            const angleAway = Math.atan2(ec.y - pc.y, ec.x - pc.x);
+            tryMove(enemy, Math.cos(angleAway) * enemy.speed * 0.35 * dt, Math.sin(angleAway) * enemy.speed * 0.35 * dt);
+          } else {
+            const angle = Math.atan2(pc.y - ec.y, pc.x - ec.x);
+            tryMove(enemy, Math.cos(angle) * enemy.speed * dt, Math.sin(angle) * enemy.speed * dt);
+          }
+        }
+        enemy.cooldown = Math.max(0, enemy.cooldown - dt);
+        enemy.shootCooldown = Math.max(0, enemy.shootCooldown - dt);
+        if (isRanged && !gameState.betweenLevels && dist < 620 && enemy.shootCooldown <= 0) {
+          enemyShoot(enemy);
+          enemy.shootCooldown = enemy.type === "boss" ? 1.0 : 1.65 + Math.random() * 0.8;
+        }
+        if (!gameState.lost && rectsOverlap(enemy, p) && enemy.cooldown <= 0) {
+          enemy.cooldown = 0.65;
+          damagePlayer(enemy.damage, enemy.type === "boss" ? "Boss bonked you. That one hurt. 🧱" : "You got hit!");
+        }
+      }
+
+      for (const b of gameState.bullets) {
+        for (const enemy of gameState.enemies) {
+          const bulletRect = { x: b.x - b.size / 2, y: b.y - b.size / 2, w: b.size, h: b.size };
+          if (enemy.health > 0 && rectsOverlap(bulletRect, enemy)) {
+            enemy.health -= b.damage;
+            b.life = 0;
+            spawnParticles(b.x, b.y, b.type === "strong" ? 9 : 4, "enemy");
+            if (enemy.health <= 0) {
+              dropCoins(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, enemy.coinValue);
+              spawnParticles(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, enemy.type === "boss" ? 34 : 18, "enemy");
+            }
+            break;
+          }
+        }
+      }
+      gameState.enemies = gameState.enemies.filter(e => e.health > 0);
+
+      for (const coin of gameState.coins) {
+        coin.bob += dt * 6;
+        const pc = center(p), cc = { x: coin.x + coin.w / 2, y: coin.y + coin.h / 2 };
+        const d = distance(pc, cc);
+        if (d < 82) { const a = Math.atan2(pc.y - cc.y, pc.x - cc.x); coin.x += Math.cos(a) * 290 * dt; coin.y += Math.sin(a) * 290 * dt; }
+        if (rectsOverlap(p, coin)) { p.coins += coin.value; coin.collected = true; setMessage(`+${coin.value} coins`, 0.55); }
+      }
+      gameState.coins = gameState.coins.filter(c => !c.collected);
+
+      for (const med of gameState.medkits) {
+        med.bob += dt * 5;
+        if (rectsOverlap(p, med)) {
+          p.health = Math.min(p.maxHealth, p.health + med.heal);
+          med.collected = true;
+          setMessage(`+${med.heal} HP`, 0.75);
+          spawnParticles(med.x, med.y, 8, "heal");
+        }
+      }
+      gameState.medkits = gameState.medkits.filter(m => !m.collected);
+
+      if (!gameState.betweenLevels && gameState.enemies.length === 0) {
+        gameState.betweenLevels = true;
+        gameState.bullets = [];
+        gameState.enemyBullets = [];
+        const isFinal = gameState.levelIndex === levelData.length - 1;
+        setMessage(isFinal ? "All enemies cleared. Go to the exit to finish. 🏁" : "Level cleared. Go to green NEXT zone for shop. 🛒", 4);
+      }
+      if (gameState.betweenLevels && rectsOverlap(p, gameState.exit)) {
+        if (gameState.levelIndex === levelData.length - 1) {
+          gameState.won = true; gameState.running = false; setMessage("You beat all 3 levels. Actual W. 🏆", 999);
+        } else openShop();
+      }
+
+      for (const part of gameState.particles) {
+        part.x += part.vx * dt; part.y += part.vy * dt; part.vx *= 0.9; part.vy *= 0.9; part.life -= dt;
+      }
+      gameState.particles = gameState.particles.filter(p => p.life > 0);
+      gameState.cameraShake = Math.max(0, gameState.cameraShake - 30 * dt);
+      updateCamera();
+    }
+
+    function updateCamera() {
+      const p = gameState.player;
+      gameState.camera.x = clamp(p.x + p.w / 2 - VIEW_W / 2, 0, WORLD_W - VIEW_W);
+      gameState.camera.y = clamp(p.y + p.h / 2 - VIEW_H / 2, 0, WORLD_H - VIEW_H);
+      mouse.worldX = mouse.x + gameState.camera.x;
+      mouse.worldY = mouse.y + gameState.camera.y;
+    }
+
+    function drawPixelText(text, x, y, size = 14, color = "#fff", align = "left") {
+      ctx.save(); ctx.fillStyle = color; ctx.font = `900 ${size}px monospace`; ctx.textAlign = align; ctx.textBaseline = "top"; ctx.fillText(text, x, y); ctx.restore();
+    }
+    function drawHealthBar(x, y, w, h, value, max, fillColor) {
+      ctx.fillStyle = "#111827"; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = "#64748b"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+      const pct = clamp(value / max, 0, 1);
+      ctx.fillStyle = fillColor; ctx.fillRect(x + 2, y + 2, (w - 4) * pct, h - 4);
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = "#172033"; ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+      ctx.fillStyle = "#243047";
+      for (let x = 0; x < WORLD_W; x += 64) for (let y = 0; y < WORLD_H; y += 64) { ctx.fillRect(x + 10, y + 10, 4, 4); ctx.fillRect(x + 38, y + 42, 3, 3); }
+      ctx.strokeStyle = "#334155"; ctx.lineWidth = 10; ctx.strokeRect(5, 5, WORLD_W - 10, WORLD_H - 10);
+      for (const o of baseObstacles) {
+        ctx.fillStyle = "#29364f"; ctx.fillRect(o.x, o.y, o.w, o.h);
+        ctx.fillStyle = "#1e293b"; ctx.fillRect(o.x + 8, o.y + 8, o.w - 16, o.h - 16);
+      }
+    }
+
+    function drawTraps() {
+      for (const t of gameState.traps) {
+        const alpha = 0.55 + Math.sin(t.pulse) * 0.18;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "#991b1b"; ctx.fillRect(t.x, t.y, t.w, t.h);
+        ctx.fillStyle = "#ef4444"; ctx.fillRect(t.x + 6, t.y + 6, t.w - 12, t.h - 12);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawShop() {
+      const s = gameState.shop;
+      ctx.fillStyle = "#78350f"; ctx.fillRect(s.x, s.y, s.w, s.h);
+      ctx.fillStyle = "#f59e0b"; ctx.fillRect(s.x - 8, s.y - 22, s.w + 16, 28);
+      ctx.fillStyle = "#451a03"; ctx.fillRect(s.x + 50, s.y + 60, 38, 64);
+      ctx.fillStyle = "#fef3c7"; ctx.fillRect(s.x + 12, s.y + 22, 38, 30); ctx.fillRect(s.x + 88, s.y + 22, 38, 30);
+      drawPixelText("SHOP", s.x + s.w / 2, s.y - 18, 16, "#111827", "center");
+      const p = gameState.player;
+      const near = distance(center(p), { x: s.x + s.w / 2, y: s.y + s.h / 2 }) < 145;
+      if (near && !gameState.won && !gameState.lost && (!gameState.firstPasswordUsed || gameState.betweenLevels)) drawPixelText("Press E", s.x + s.w / 2, s.y + s.h + 12, 14, "#fde68a", "center");
+    }
+
+    function drawExit() {
+      const e = gameState.exit;
+      ctx.fillStyle = gameState.betweenLevels ? "#22c55e" : "#475569"; ctx.fillRect(e.x, e.y, e.w, e.h);
+      ctx.fillStyle = "#0f172a"; ctx.fillRect(e.x + 12, e.y + 12, e.w - 24, e.h - 24);
+      drawPixelText(gameState.betweenLevels ? "NEXT" : "LOCK", e.x + e.w / 2, e.y + e.h / 2 - 8, 14, gameState.betweenLevels ? "#86efac" : "#94a3b8", "center");
+    }
+
+    function drawPlayer() {
+      const p = gameState.player;
+      const pc = center(p);
+      const angle = Math.atan2(mouse.worldY - pc.y, mouse.worldX - pc.x);
+      ctx.globalAlpha = p.invuln > 0 && Math.floor(p.invuln * 16) % 2 === 0 ? 0.45 : 1;
+      if (p.shield > 0) { ctx.strokeStyle = "#67e8f9"; ctx.lineWidth = 3; ctx.strokeRect(p.x - 5, p.y - 5, p.w + 10, p.h + 10); }
+      ctx.fillStyle = p.dashTime > 0 ? "#93c5fd" : "#60a5fa"; ctx.fillRect(p.x + 4, p.y + 10, 16, 20);
+      ctx.fillStyle = "#fbbf24"; ctx.fillRect(p.x + 5, p.y, 14, 12);
+      ctx.fillStyle = "#1e3a8a"; ctx.fillRect(p.x + 3, p.y + 28, 7, 7); ctx.fillRect(p.x + 14, p.y + 28, 7, 7);
+      ctx.save(); ctx.translate(pc.x, pc.y + 2); ctx.rotate(angle); ctx.fillStyle = p.hasGun ? (p.gunType === "strong" ? "#e5e7eb" : "#94a3b8") : "#334155"; ctx.fillRect(10, -3, p.hasGun && p.gunType === "strong" ? 26 : 15, 6); ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    function drawEnemy(e) {
+      const color = e.type === "ranger" ? "#a855f7" : e.type === "brute" ? "#f97316" : e.type === "boss" ? "#dc2626" : "#ef4444";
+      const head = e.type === "ranger" ? "#581c87" : e.type === "brute" ? "#7c2d12" : "#7f1d1d";
+      ctx.fillStyle = color; ctx.fillRect(e.x + 4, e.y + 8, e.w - 8, e.h - 10);
+      ctx.fillStyle = head; ctx.fillRect(e.x + 5, e.y, e.w - 10, 13);
+      ctx.fillStyle = "#111827"; ctx.fillRect(e.x + 8, e.y + 4, 3, 3); ctx.fillRect(e.x + e.w - 11, e.y + 4, 3, 3);
+      drawHealthBar(e.x - 5, e.y - 11, Math.max(34, e.w + 10), 6, e.health, e.maxHealth, color);
+      if (e.type === "boss") drawPixelText("BOSS", e.x + e.w / 2, e.y - 29, 12, "#fecaca", "center");
+    }
+
+    function drawBullets() {
+      for (const b of gameState.bullets) { ctx.fillStyle = b.type === "strong" ? "#fef08a" : "#cbd5e1"; ctx.fillRect(b.x - b.size / 2, b.y - b.size / 2, b.size, b.size); }
+      for (const b of gameState.enemyBullets) { ctx.fillStyle = b.type === "boss" ? "#fb7185" : "#c084fc"; ctx.fillRect(b.x - b.size / 2, b.y - b.size / 2, b.size, b.size); }
+    }
+
+    function drawCoins() {
+      for (const c of gameState.coins) { const bob = Math.sin(c.bob) * 2; ctx.fillStyle = "#facc15"; ctx.fillRect(c.x, c.y + bob, c.w, c.h); ctx.fillStyle = "#854d0e"; ctx.fillRect(c.x + 4, c.y + 3 + bob, 4, 6); }
+      for (const m of gameState.medkits) { const bob = Math.sin(m.bob) * 2; ctx.fillStyle = "#f8fafc"; ctx.fillRect(m.x, m.y + bob, m.w, m.h); ctx.fillStyle = "#ef4444"; ctx.fillRect(m.x + 7, m.y + 3 + bob, 4, 12); ctx.fillRect(m.x + 3, m.y + 7 + bob, 12, 4); }
+    }
+
+    function drawParticles() {
+      for (const p of gameState.particles) {
+        ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+        ctx.fillStyle = p.kind === "enemy" ? "#fb7185" : p.kind === "wall" ? "#94a3b8" : p.kind === "heal" ? "#86efac" : p.kind === "enemyShot" ? "#c084fc" : "#93c5fd";
+        ctx.fillRect(p.x, p.y, 4, 4); ctx.globalAlpha = 1;
+      }
+    }
+
+    function drawMiniMap() {
+      const mapW = 148, mapH = 92;
+      const x = VIEW_W - mapW - 16, y = 68;
+      const sx = mapW / WORLD_W, sy = mapH / WORLD_H;
+      ctx.fillStyle = "rgba(2, 6, 23, .72)"; ctx.fillRect(x, y, mapW, mapH);
+      ctx.strokeStyle = "#475569"; ctx.strokeRect(x, y, mapW, mapH);
+      ctx.fillStyle = "#f59e0b"; ctx.fillRect(x + gameState.shop.x * sx, y + gameState.shop.y * sy, 8, 7);
+      ctx.fillStyle = gameState.betweenLevels ? "#22c55e" : "#64748b"; ctx.fillRect(x + gameState.exit.x * sx, y + gameState.exit.y * sy, 7, 7);
+      ctx.fillStyle = "#ef4444"; for (const e of gameState.enemies) ctx.fillRect(x + e.x * sx, y + e.y * sy, 3, 3);
+      ctx.fillStyle = "#60a5fa"; ctx.fillRect(x + gameState.player.x * sx, y + gameState.player.y * sy, 4, 4);
+      drawPixelText("MAP", x + 6, y + 5, 10, "#cbd5e1");
+    }
+
+    function drawUI() {
+      const p = gameState.player;
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "rgba(15, 23, 42, 0.9)"; ctx.fillRect(0, 0, VIEW_W, 58);
+      ctx.strokeStyle = "#334155"; ctx.lineWidth = 3; ctx.strokeRect(0, 0, VIEW_W, 58);
+      drawHealthBar(18, 19, 174, 18, p.health, p.maxHealth, p.health > 35 ? "#22c55e" : "#ef4444");
+      drawPixelText(`HP ${Math.ceil(p.health)}/${p.maxHealth}`, 24, 21, 12, "#fff");
+      const gunLabel = p.hasGun ? (p.gunType === "strong" ? "STRONG GUN" : "WEAK GUN") : "NO GUN";
+      const gunColor = p.gunType === "strong" ? "#fde68a" : p.gunType === "weak" ? "#fca5a5" : "#cbd5e1";
+      drawPixelText(gunLabel, 222, 19, 15, gunColor);
+      drawPixelText(`🪙 ${p.coins}`, 378, 19, 15, "#facc15");
+      drawPixelText(`Shield: ${Math.ceil(p.shield)}`, 465, 19, 15, "#67e8f9");
+      drawPixelText(`Lvl ${gameState.levelIndex + 1}/3`, 590, 19, 15, "#cbd5e1");
+      drawPixelText(`Enemies: ${gameState.enemies.length}`, 690, 19, 15, "#cbd5e1");
+      const dashPct = 1 - clamp(p.dashCooldown / 1.35, 0, 1);
+      drawHealthBar(18, 43, 96, 8, dashPct, 1, "#38bdf8");
+      drawPixelText("DASH", 124, 39, 12, p.dashCooldown <= 0 ? "#bae6fd" : "#64748b");
+      drawMiniMap();
+      if (gameState.lost || gameState.won) {
+        ctx.fillStyle = "rgba(2, 6, 23, 0.72)"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+        drawPixelText(gameState.won ? "YOU WIN" : "GAME OVER", VIEW_W / 2, 195, 44, gameState.won ? "#86efac" : "#fca5a5", "center");
+        drawPixelText(statusText.textContent, VIEW_W / 2, 255, 17, "#e5e7eb", "center");
+        drawPixelText("Press R to restart", VIEW_W / 2, 295, 16, "#fde68a", "center");
+      }
+      ctx.restore();
+    }
+
+    function render() {
+      ctx.save(); ctx.clearRect(0, 0, VIEW_W, VIEW_H);
+      let shakeX = 0, shakeY = 0;
+      if (gameState.cameraShake > 0) { shakeX = (Math.random() - 0.5) * gameState.cameraShake; shakeY = (Math.random() - 0.5) * gameState.cameraShake; }
+      ctx.translate(-gameState.camera.x + shakeX, -gameState.camera.y + shakeY);
+      drawBackground(); drawTraps(); drawExit(); drawShop(); drawCoins();
+      for (const enemy of gameState.enemies) drawEnemy(enemy);
+      drawBullets(); drawParticles(); drawPlayer(); ctx.restore(); drawUI();
+    }
+
+    function loop(timestamp) {
+      const now = timestamp;
+      const dt = Math.min(0.033, (timestamp - lastTime) / 1000 || 0);
+      lastTime = timestamp; update(dt, now); render(); requestAnimationFrame(loop);
+    }
+
+    window.addEventListener("keydown", (e) => {
+      const key = e.key.toLowerCase(); keys.add(key);
+      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)) e.preventDefault();
+      if (key === "shift") {
+        const p = gameState.player;
+        if (p.dashCooldown <= 0 && !gameState.lost && !gameState.won && !shopModal.classList.contains("show")) {
+          p.dashTime = 0.16; p.dashCooldown = 1.35; p.invuln = Math.max(p.invuln, 0.18); spawnParticles(p.x + p.w / 2, p.y + p.h / 2, 10, "dash");
+        }
+      }
+      if (key === "e") {
+        const p = gameState.player, s = gameState.shop;
+        const nearShop = distance(center(p), { x: s.x + s.w / 2, y: s.y + s.h / 2 }) < 145;
+        if (nearShop && (!gameState.firstPasswordUsed || gameState.betweenLevels)) openShop();
+        if (gameState.betweenLevels && rectsOverlap(p, gameState.exit)) openShop();
+      }
+      if (key === "r") resetGame();
+      if (key === "enter" && shopModal.classList.contains("show")) buyGunOrContinue();
+    });
+    window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+    canvas.addEventListener("mousemove", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      mouse.x = ((e.clientX - rect.left) / rect.width) * VIEW_W;
+      mouse.y = ((e.clientY - rect.top) / rect.height) * VIEW_H;
+      mouse.worldX = mouse.x + gameState.camera.x;
+      mouse.worldY = mouse.y + gameState.camera.y;
+    });
+    canvas.addEventListener("mousedown", () => { mouse.down = true; });
+    window.addEventListener("mouseup", () => { mouse.down = false; });
+    buyGunBtn.addEventListener("click", buyGunOrContinue);
+    cancelShopBtn.addEventListener("click", closeShop);
+    restartBtn.addEventListener("click", resetGame);
+    shopModal.addEventListener("click", (e) => { if (e.target === shopModal) closeShop(); });
+
+    resetGame(); requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
